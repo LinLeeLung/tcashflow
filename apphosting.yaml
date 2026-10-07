@@ -1,0 +1,21 @@
+runConfig:
+  minInstances: 0
+
+scripts:
+  buildCommand: npm run build
+  runCommand: npm start
+
+env:
+  - variable: HOST
+    value: 0.0.0.0
+    availability:
+      - RUNTIME
+
+outputFiles:
+  serverApp:
+    include:
+      - dist
+      - server.mjs
+      - server
+      - package.json
+      - package-lock.json
