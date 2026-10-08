@@ -4,6 +4,7 @@ import { defineConfig } from 'vitest/config'
 import { serveQuotes } from './server/quotes.mjs'
 
 export default defineConfig({
+  define: { 'import.meta.env.VITE_BUILD_TIME': JSON.stringify(new Date().toISOString()) },
   server: { host: '127.0.0.1' },
   preview: { host: '127.0.0.1' },
   plugins: [vue(), tailwindcss(), {

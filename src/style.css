@@ -603,6 +603,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .site-footer { display: flex; justify-content: space-between; max-width: 1400px; margin: 0 auto; padding: 16px 0 20px; border-top: 1px solid rgba(230, 237, 225, .065); color: #758176; font-size: 8px; letter-spacing: .13em; }
 .site-footer > span:first-child { color: #91a18f; font-weight: 700; }
+.site-footer { flex-wrap: wrap; gap: 10px 16px; }
+.site-footer .version-updated { font-size: 11px; letter-spacing: normal; }
 
 @keyframes coin-float { 0%, 100% { transform: translateY(0) rotate(-8deg); } 50% { transform: translateY(-8px) rotate(7deg); } }
 @keyframes bar-grow { from { transform: scaleY(0); } to { transform: scaleY(1); } }

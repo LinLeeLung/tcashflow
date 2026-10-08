@@ -7,6 +7,11 @@ import { spaces } from './game/board'
 import StockMarket from './components/StockMarket.vue'
 
 const g = useGameStore()
+const buildTime = import.meta.env.VITE_BUILD_TIME
+const versionUpdatedAt = new Intl.DateTimeFormat('zh-TW', {
+  timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+}).format(new Date(buildTime))
 const gameSummary = computed(() => g.summary!)
 const mode = ref<'menu' | 'local' | 'online'>('menu')
 const entries = ref([{ name: '玩家一', prof: 0 }, { name: '玩家二', prof: 1 }])
@@ -461,6 +466,10 @@ onBeforeUnmount(() => {
       <button v-if="g.online" class="leave-game-button" @click="g.leaveRoom()">離開房間</button>
     </fieldset>
 
-    <footer class="site-footer"><span>現金流 CASHFLOW</span><span>PLAY SMART. LIVE FREE.</span></footer>
+    <footer class="site-footer">
+      <span>現金流 CASHFLOW</span>
+      <span v-if="!g.inGame" class="version-updated">版本更新：<time :datetime="buildTime">{{ versionUpdatedAt }}</time>（台灣時間）</span>
+      <span>PLAY SMART. LIVE FREE.</span>
+    </footer>
   </main>
 </template>
