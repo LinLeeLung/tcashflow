@@ -114,6 +114,8 @@ export const cards: Card[] = [
   estate('二手自動販賣機經營權', 40000, 0, 1000, true),
   { kind: 'extraDice', title: '雙骰加速機會', desc: '僅目前玩家立即追加擲 2 顆骰子，合計點數移動；經過發薪日與落點照常結算', dice: 2 },
   { kind: 'extraDice', title: '三骰衝刺機會', desc: '僅目前玩家立即追加擲 3 顆骰子，合計點數移動；經過發薪日與落點照常結算', dice: 3 },
+  { kind: 'opportunity', title: '失業', desc: '僅目前玩家接下來停玩 3 回合，不能擲骰、交易或借還款；第四次回合恢復操作，薪資設定不變',
+    apply: p => ({ ...p, skipTurns: 3 }) },
 ]
 
 export function drawCardIndex(rng: () => number = Math.random): number {

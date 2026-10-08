@@ -53,4 +53,13 @@ describe('TWSE closing quotes', () => {
     fetchMock.mockResolvedValueOnce({ ok: false, status: 502, json: async () => ({ error: '暫時無法取得' }) })
     await expect(fetchStockQuotes(controller.signal, '2026-10-06')).rejects.toThrow('暫時無法取得')
   })
+
+  it('explains network failures and preserves aborted requests for timeout handling', async () => {
+    const error = new TypeError('Failed to fetch')
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(error))
+    const controller = new AbortController()
+    await expect(fetchStockQuotes(controller.signal, '2020-01-01')).rejects.toThrow('無法連線至行情服務')
+    controller.abort()
+    await expect(fetchStockQuotes(controller.signal, '2020-01-01')).rejects.toBe(error)
+  })
 })

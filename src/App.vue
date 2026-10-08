@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useGameStore } from './stores/game'
 import { professions } from './game/professions'
-import { BOARD_SIZE } from './game/finance'
+import { bankLoanCredit, BOARD_SIZE } from './game/finance'
 import { spaces } from './game/board'
 import StockMarket from './components/StockMarket.vue'
 
@@ -16,6 +16,7 @@ const joinCode = ref('')
 const bankRepayment = ref<number | string>('')
 const repaymentAmount = computed(() => Number(bankRepayment.value))
 const bankLoan = computed(() => g.player?.liabilities.find(l => l.name === '銀行貸款'))
+const loanCredit = computed(() => g.player ? bankLoanCredit(g.player) : null)
 const validBankRepayment = computed(() => bankLoan.value && Number.isFinite(repaymentAmount.value)
   && repaymentAmount.value > 0 && repaymentAmount.value <= bankLoan.value.balance
   && repaymentAmount.value <= (g.player?.cash ?? 0)
@@ -376,8 +377,10 @@ onBeforeUnmount(() => {
             <p v-if="g.historyComplete" class="waiting-note" role="status">已完成最後可用歷史交易日，本局停止推進；可按右上角重新開始。</p>
             <div v-if="g.quoteError" class="market-error" role="alert">{{ g.quoteError }} <button class="repay-button" @click="g.loadStockQuotes()">重試歷史行情</button></div>
             <button class="roll-button" :disabled="isRolling || !g.canRoll" @click="rollDice()">
-              <span>{{ isRolling ? '骰子滾動中' : g.lastDice ? '本回合已擲骰' : '擲出骰子' }}</span><span class="roll-arrow">{{ isRolling ? '···' : '↗' }}</span>
+              <span>{{ isRolling ? '骰子滾動中' : g.skippingTurn ? '失業停玩中' : g.lastDice ? '本回合已擲骰' : '擲出骰子' }}</span><span class="roll-arrow">{{ isRolling ? '···' : '↗' }}</span>
             </button>
+            <button class="end-turn-button" :disabled="isRolling || !g.canEndTurn" @click="g.endTurn()">{{ g.skippingTurn ? '跳過回合，交給下一位' : '結束回合，交給下一位' }} <span>→</span></button>
+            <p v-if="g.player.skipTurns" class="event-purchase-error" role="status">失業：接下來尚需停玩 {{ g.player.skipTurns }} 回合。{{ g.skippingTurn ? '本回合不能擲骰、交易或借還款，請跳過回合。' : '本回合結束後開始停玩。' }}薪資設定不變。</p>
             <button class="secondary-button" :disabled="isRolling || !g.canOpenStockMarket" @click="g.openStockMarket()">📈 進入股票市場</button>
             <p v-if="g.myTurn" class="waiting-note">自由玩法：自己的回合可在擲骰前後買賣，離開後可再次進入。</p>
             <div v-if="g.myTurn && !g.gameOver && !isRolling && g.lastDice" class="waiting-note" role="status">{{ g.stockMarketOpen ? '可在股票市場買賣，離開市場後再交棒' : g.card ? '請先買進或放棄事件卡' : '本回合已完成，請結束回合交給下一位' }}</div>
@@ -386,12 +389,12 @@ onBeforeUnmount(() => {
               <div class="event-card-top"><span>{{ g.card.kind === 'realEstate' && g.card.opportunity ? '✨ 個人創業機會（僅你可買進）' : '✨ 抽到事件卡' }}</span><span class="event-spark">✦</span></div>
               <h3>{{ g.card.title }}</h3>
               <p>{{ g.card.desc }}</p>
+              <p v-if="g.cardPurchaseIssue" class="event-purchase-error" role="alert">{{ g.cardPurchaseIssue }}</p>
               <div class="event-actions">
-                <button class="event-accept" :disabled="isRolling" @click="g.acceptCard()">買進</button>
-                <button class="event-decline" :disabled="isRolling" @click="g.declineCard()">放棄</button>
+                <button class="event-accept" :disabled="isRolling || !!g.cardPurchaseIssue" @click="g.acceptCard()">買進</button>
+                <button class="event-decline" :disabled="isRolling || !g.myTurn || g.gameOver" @click="g.declineCard()">放棄</button>
               </div>
             </div>
-            <button class="end-turn-button" :disabled="isRolling || !g.canEndTurn" @click="g.endTurn()">結束回合，交給下一位 <span>→</span></button>
             <div v-if="g.gameOver" class="fast-track-note">🏆 遊戲已結束</div>
             <p class="waiting-note">勝出條件：第一位被動收入 ≥ 每月總支出的玩家獲勝。</p>
           </section>
@@ -400,7 +403,7 @@ onBeforeUnmount(() => {
             <div class="section-heading"><h3>玩家隊伍</h3><span>{{ g.players.length }} 位玩家</span></div>
             <div v-for="(p, i) in g.players" :key="p.ownerId || p.name" class="player-row" :class="{ 'player-row-active': i === g.turn }">
               <span class="player-avatar" :class="`avatar-color-${i % 6}`">{{ p.name.slice(0, 1) }}</span>
-              <span class="player-row-info"><b>{{ p.name }}</b><small>{{ p.profession.title }}</small></span>
+              <span class="player-row-info"><b>{{ p.name }}</b><small>{{ p.profession.title }}{{ p.skipTurns ? ` · 失業停玩 ${p.skipTurns} 回合` : '' }}</small></span>
               <span class="player-position">#{{ String(p.position + 1).padStart(2, '0') }}</span>
             </div>
           </section>
@@ -429,12 +432,12 @@ onBeforeUnmount(() => {
             <div v-for="s in g.player.stocks" :key="s.symbol + s.cost" class="asset-row"><span>📈 {{ s.symbol }} × {{ fmt(s.shares) }} · 每股成本 ${{ fmt(s.cost) }}</span><small>成本 ${{ fmt(s.shares * s.cost) }}</small></div>
             <div v-for="r in g.player.realEstate" :key="r.name" class="asset-row"><span>🏠 {{ r.name }}</span><small class="positive">+${{ fmt(r.cashFlow) }}/月</small></div>
             <div v-for="l in g.player.liabilities" :key="l.name">
-              <div class="asset-row"><span>💳 {{ l.name }} <small>${{ fmt(l.balance) }}</small></span><button class="repay-button" :disabled="isRolling || !g.myTurn || g.player.cash < l.balance" @click="g.repay(l.name, l.balance)">還清</button></div>
+              <div class="asset-row"><span>💳 {{ l.name }} <small>${{ fmt(l.balance) }}</small></span><button class="repay-button" :disabled="isRolling || !g.myTurn || g.skippingTurn || g.player.cash < l.balance" @click="g.repay(l.name, l.balance)">還清</button></div>
               <div v-if="l.name === '銀行貸款'" class="bank-repayment">
                 <label class="field-label" for="bank-repayment-amount">部分還款金額
-                  <input id="bank-repayment-amount" v-model="bankRepayment" class="form-field" type="number" min="0.01" :max="Math.max(0, Math.min(l.balance, g.player.cash))" step="0.01" inputmode="decimal" :disabled="isRolling || !g.myTurn" />
+                  <input id="bank-repayment-amount" v-model="bankRepayment" class="form-field" type="number" min="0.01" :max="Math.max(0, Math.min(l.balance, g.player.cash))" step="0.01" inputmode="decimal" :disabled="isRolling || !g.myTurn || g.skippingTurn" />
                 </label>
-                <button class="repay-button" :disabled="isRolling || !g.myTurn || !validBankRepayment" @click="g.repay(l.name, repaymentAmount)">部分還款</button>
+                <button class="repay-button" :disabled="isRolling || !g.myTurn || g.skippingTurn || !validBankRepayment" @click="g.repay(l.name, repaymentAmount)">部分還款</button>
                 <p class="market-disclaimer">目前月付 ${{ fmt(l.monthlyPayment) }}；還款後按剩餘本金 2% 計算（四捨五入至整元）。</p>
                 <p v-if="remainingBankPayment !== null" class="market-disclaimer">還款後剩餘本金 ${{ fmt(l.balance - repaymentAmount) }}，月付 ${{ fmt(remainingBankPayment) }}。</p>
                 <p v-if="bankRepayment !== '' && !validBankRepayment" class="market-error" role="alert">金額須大於零、最多兩位小數，且不可超過貸款餘額或可用現金。</p>
@@ -442,7 +445,9 @@ onBeforeUnmount(() => {
             </div>
             <div v-if="!g.player.stocks.length && !g.player.realEstate.length" class="empty-assets">還沒有投資資產，擲骰尋找機會吧！</div>
           </div>
-          <button class="loan-button" @click="g.loan(50000)">＋ 借款 $50,000</button>
+          <p v-if="loanCredit" class="market-disclaimer">銀行貸款上限為月薪 6 倍：${{ fmt(loanCredit.limit) }}；剩餘額度 ${{ fmt(loanCredit.available) }}。被動收入不增加額度，還款後恢復額度。</p>
+          <button class="loan-button" :disabled="isRolling || !g.myTurn || g.gameOver || g.skippingTurn || !loanCredit || loanCredit.available < 50000" @click="g.loan(50000)">＋ 借款 $50,000</button>
+          <p v-if="loanCredit && loanCredit.available < 50000" class="market-disclaimer">剩餘額度不足 $50,000，請先還款再借款。</p>
         </section>
 
         <section class="finance-panel log-panel">

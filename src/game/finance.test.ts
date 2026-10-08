@@ -110,6 +110,55 @@ describe('finance', () => {
     expect(f.summarize(p).totalExpenses).toBe(f.summarize(base()).totalExpenses + 2000)
   })
 
+  it('caps outstanding bank principal at six months of salary for every profession', () => {
+    for (const profession of professions) {
+      const player = f.createPlayer('t', profession)
+      const limit = profession.salary * 6
+      expect(f.bankLoanCredit(player)).toEqual({ limit, balance: 0, available: limit })
+      const borrowed = f.borrow(f.borrow(player, limit - 50000), 50000)
+      expect(f.bankLoanCredit(borrowed)).toEqual({ limit, balance: limit, available: 0 })
+      expect(f.summarize(borrowed).totalExpenses).toBe(f.summarize(player).totalExpenses + Math.round(limit * 0.02))
+      expect(() => f.borrow(borrowed, 0.01)).toThrow('銀行貸款不可超過月薪 6 倍')
+      expect(() => f.borrow(player, limit + 0.01)).toThrow('銀行貸款不可超過月薪 6 倍')
+    }
+  })
+
+  it('does not increase credit through cash or passive income, and preserves over-limit legacy debt', () => {
+    const player = base()
+    player.cash = 10000000
+    player.stocks = [{ symbol: '2330', shares: 100000, cost: 600, dividend: 10 }]
+    player.realEstate = [{ name: 'x', downPayment: 1000000, mortgage: 0, cashFlow: 100000 }]
+    expect(f.bankLoanCredit(player).limit).toBe(510000)
+    player.liabilities.push({ name: '銀行貸款', balance: 600000, monthlyPayment: 12000 })
+    expect(f.bankLoanCredit(player)).toEqual({ limit: 510000, balance: 600000, available: 0 })
+    const original = structuredClone(player)
+    expect(() => f.borrow(player, 50000)).toThrow('剩餘額度 0')
+    expect(player).toEqual(original)
+    expect(f.bankLoanCredit(f.repayLiability(player, '銀行貸款', 100000)).available).toBe(10000)
+  })
+
+  it('restores credit after partial or full repayment without allowing repeated loans past the cap', () => {
+    const borrowed = f.borrow(base(), 510000)
+    const partial = f.repayLiability(borrowed, '銀行貸款', 50000)
+    expect(f.bankLoanCredit(partial).available).toBe(50000)
+    const borrowedAgain = f.borrow(partial, 50000)
+    expect(f.bankLoanCredit(borrowedAgain).available).toBe(0)
+    expect(() => f.borrow(borrowedAgain, 50000)).toThrow()
+    const repaid = f.repayLiability(borrowedAgain, '銀行貸款', 510000)
+    expect(f.bankLoanCredit(repaid).available).toBe(510000)
+  })
+
+  it('rejects invalid borrowing amounts without changing the player and keeps cent precision', () => {
+    const player = base()
+    const original = structuredClone(player)
+    for (const amount of [0, -1, NaN, Infinity, 0.001, 50000.001, Number.MAX_SAFE_INTEGER])
+      expect(() => f.borrow(player, amount)).toThrow('借款金額必須大於零，最多兩位小數')
+    expect(player).toEqual(original)
+    const borrowed = f.borrow(f.borrow(player, 1000.1), 2000.2)
+    expect(borrowed.cash).toBe(153000.3)
+    expect(f.bankLoanCredit(borrowed)).toEqual({ limit: 510000, balance: 3000.3, available: 506999.7 })
+  })
+
   it('partially repays bank principal and reduces monthly payment at two percent', () => {
     const p = f.borrow(base(), 100000)
     const partial = f.repayLiability(p, '銀行貸款', 25000)

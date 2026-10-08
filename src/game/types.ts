@@ -43,6 +43,7 @@ export interface Player {
   childExpensePerKid: number
   position: number
   isFastTrack: boolean
+  skipTurns?: number
   ownerId?: string // 連線模式下操作此玩家的 clientId
 }
 
@@ -57,4 +58,3 @@ export interface Summary {
   progress: number // 被動收入 / 總支出，0~1
   canFastTrack: boolean
 }
-

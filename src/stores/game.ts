@@ -59,13 +59,26 @@ export const useGameStore = defineStore('game', () => {
   const isHost = computed(() => hostId.value === clientId)
   const myTurn = computed(() => !online.value || player.value?.ownerId === clientId)
   const inGame = computed(() => players.value.length > 0 && (!online.value || phase.value === 'playing'))
+  const skippingTurn = computed(() => lastDice.value === 0 && (player.value?.skipTurns ?? 0) > 0)
+  const cardPurchaseIssue = computed(() => {
+    const c = card.value
+    if (!c || !player.value) return ''
+    if (gameOver.value) return '遊戲已結束，無法購買'
+    if (!myTurn.value) return '只有目前回合的玩家可以買進或放棄事件卡'
+    if (pendingExtraDice.value) return '請先完成追加擲骰'
+    const cost = c.kind === 'stock' ? Math.round(c.stock.shares * c.stock.cost * 100) / 100
+      : c.kind === 'realEstate' ? c.asset.downPayment : 0
+    if (player.value.cash >= cost) return ''
+    const money = (value: number) => value.toLocaleString('zh-TW', { maximumFractionDigits: 2 })
+    return `現金不足：需要 $${money(cost)}，目前現金 $${money(player.value.cash)}，還差 $${money(cost - player.value.cash)}。可賣股或在剩餘額度內借款，也可放棄此卡。`
+  })
   const canRollExtra = computed(() => inGame.value && myTurn.value && !gameOver.value && pendingExtraDice.value > 0)
-  const canRoll = computed(() => inGame.value && myTurn.value && !gameOver.value && !pendingExtraDice.value && lastDice.value === 0 && cardIdx.value === null && !stockMarketOpen.value
+  const canRoll = computed(() => inGame.value && myTurn.value && !gameOver.value && !skippingTurn.value && !pendingExtraDice.value && lastDice.value === 0 && cardIdx.value === null && !stockMarketOpen.value
     && stockQuotes.value.length > 0 && !quotesLoading.value && !quoteError.value && !historyComplete.value)
-  const canEndTurn = computed(() => inGame.value && myTurn.value && !gameOver.value && !pendingExtraDice.value && lastDice.value > 0 && cardIdx.value === null && !stockMarketOpen.value)
-  const canOpenStockMarket = computed(() => inGame.value && myTurn.value && !gameOver.value && !pendingExtraDice.value && !stockMarketOpen.value
+  const canEndTurn = computed(() => inGame.value && myTurn.value && !gameOver.value && !pendingExtraDice.value && (lastDice.value > 0 || skippingTurn.value) && cardIdx.value === null && !stockMarketOpen.value)
+  const canOpenStockMarket = computed(() => inGame.value && myTurn.value && !gameOver.value && !skippingTurn.value && !pendingExtraDice.value && !stockMarketOpen.value
     && stockQuotes.value.length > 0 && !quotesLoading.value && !quoteError.value && !historyComplete.value)
-  const canTradeStocks = computed(() => inGame.value && myTurn.value && !gameOver.value && stockMarketOpen.value
+  const canTradeStocks = computed(() => inGame.value && myTurn.value && !gameOver.value && !skippingTurn.value && stockMarketOpen.value
     && stockQuotes.value.length > 0 && !quotesLoading.value && !quoteError.value && !historyComplete.value)
 
   function note(msg: string) {
@@ -245,17 +258,28 @@ export const useGameStore = defineStore('game', () => {
   }
 
   // ---- 遊戲動作（連線時僅輪到的玩家可操作）----
-  function guard(): boolean {
-    return !!player.value && myTurn.value && !gameOver.value && !pendingExtraDice.value
+  function guard(allowSkippedTurn = false): boolean {
+    if (!player.value || !myTurn.value || gameOver.value || pendingExtraDice.value) return false
+    if (skippingTurn.value && !allowSkippedTurn) {
+      note('⚠ 失業停玩期間只能跳過回合，不能擲骰、交易或借還款')
+      return false
+    }
+    return true
   }
 
   function endTurn() {
-    if (!guard()) return
+    if (!guard(true)) return
+    if (historyComplete.value) return
     if (!canEndTurn.value) {
       note(lastDice.value === 0 ? '⚠ 請先擲骰，再結束回合'
         : stockMarketOpen.value ? '⚠ 請先離開股票市場，再結束回合'
         : '⚠ 請先買進或放棄事件卡，再結束回合')
       return
+    }
+    if (skippingTurn.value) {
+      const remaining = (player.value!.skipTurns ?? 0) - 1
+      players.value[turn.value] = { ...player.value!, skipTurns: remaining }
+      note(`${player.value!.name} 失業，跳過本回合；${remaining ? `尚需停玩 ${remaining} 回合` : '下次回合恢復操作'}`)
     }
     cardIdx.value = null
     lastDice.value = 0
@@ -349,6 +373,10 @@ export const useGameStore = defineStore('game', () => {
 
   function acceptCard() {
     const c = card.value
+    if (c && cardPurchaseIssue.value) {
+      note(`⚠ ${cardPurchaseIssue.value}`)
+      return
+    }
     if (!c || !guard()) return
     const ok =
       c.kind === 'stock' ? update(p => fin.buyStock(p, c.stock), `買進 ${c.title}`)
@@ -473,7 +501,7 @@ export const useGameStore = defineStore('game', () => {
   }
 
   return {
-    clientId, players, turn, player, card, log, lastDice, summary, winners, gameOver, diceResults, pendingExtraDice, canRollExtra,
+    clientId, players, turn, player, card, cardPurchaseIssue, log, lastDice, summary, winners, gameOver, diceResults, pendingExtraDice, canRollExtra, skippingTurn,
     stockMarketOpen, stockQuotes, quotesLoading, quoteError, tradeMessage, canOpenStockMarket, canTradeStocks, marketDate, nextMarketDate, round, historyComplete,
     roomCode, phase, members, hostId, error, online, isHost, myTurn, inGame, canRoll, canEndTurn,
     start, createRoom, joinRoom, updateMe, startOnline, leaveRoom, resetGame,

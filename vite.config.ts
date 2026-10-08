@@ -4,6 +4,8 @@ import { defineConfig } from 'vitest/config'
 import { serveQuotes } from './server/quotes.mjs'
 
 export default defineConfig({
+  server: { host: '127.0.0.1' },
+  preview: { host: '127.0.0.1' },
   plugins: [vue(), tailwindcss(), {
     name: 'twse-quotes',
     configureServer(server) {

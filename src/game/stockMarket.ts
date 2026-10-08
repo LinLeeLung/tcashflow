@@ -57,7 +57,13 @@ export interface HistoricalQuotes {
 }
 
 export async function fetchStockQuotes(signal: AbortSignal, date: string): Promise<HistoricalQuotes> {
-  const response = await fetch(`/api/quotes?date=${encodeURIComponent(date)}`, { signal })
+  let response: Response
+  try {
+    response = await fetch(`/api/quotes?date=${encodeURIComponent(date)}`, { signal })
+  } catch (error) {
+    if (signal.aborted) throw error
+    throw new Error('無法連線至行情服務，請確認遊戲伺服器已啟動，再按「重試歷史行情」。', { cause: error })
+  }
   const data: unknown = await response.json()
   if (!response.ok) {
     const detail = typeof data === 'object' && data !== null && 'error' in data && typeof data.error === 'string' ? data.error : `HTTP ${response.status}`

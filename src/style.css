@@ -519,28 +519,35 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .end-turn-button {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   gap: 7px;
   width: 100%;
-  min-height: 38px;
-  margin-top: 8px;
-  border: 1px solid rgba(184, 228, 156, .18);
-  border-radius: 9px;
-  background: rgba(177, 224, 139, .055);
-  color: #c2dda9;
-  font-size: 10px;
+  min-height: 46px;
+  margin: 8px 0;
+  padding: 0 15px;
+  border: 1px solid var(--mint);
+  border-radius: 10px;
+  background: var(--mint);
+  color: #192319;
+  font-size: 12px;
+  font-weight: 700;
   cursor: pointer;
+  transition: transform .2s, background .2s;
 }
+.end-turn-button:hover:not(:disabled) { transform: translateY(-2px); background: var(--mint-bright); }
+.roll-button:focus-visible, .end-turn-button:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
 .event-card { margin-top: 14px; padding: 13px; border: 1px solid rgba(229, 180, 108, .28); border-radius: 12px; background: linear-gradient(140deg, rgba(139, 100, 47, .2), rgba(54, 48, 32, .45)); animation: card-arrive .35s cubic-bezier(.2, .8, .2, 1) both; }
 .event-card-top { display: flex; justify-content: space-between; color: #e6bc79; font-size: 9px; }
 .event-spark { font-size: 14px; }
 .event-card h3 { margin: 9px 0 5px; color: #f0e3c9; font-size: 13px; }
 .event-card p { margin: 0; color: #bbaf98; font-size: 10px; line-height: 1.65; }
+.event-card .event-purchase-error { margin-top: 10px; padding: 9px; border: 1px solid #b75e50; border-radius: 8px; background: #fff5ed; color: #9b3529; font-size: 12px; }
+.action-panel > .event-purchase-error { padding: 9px; border: 1px solid #b75e50; border-radius: 8px; background: #fff5ed; color: #9b3529; font-size: 12px; line-height: 1.65; }
 .event-actions { display: flex; gap: 7px; margin-top: 11px; }
 .event-actions button { flex: 1; min-height: 32px; border-radius: 8px; font-size: 10px; cursor: pointer; }
+.event-actions button:disabled { opacity: .55; cursor: not-allowed; }
 .event-accept { border: 0; background: #aedc88; color: #1b281b; font-weight: 700; }
 .event-decline { border: 1px solid rgba(236, 235, 219, .16); background: rgba(255, 255, 255, .035); color: #c5c7b9; }
-.end-turn-button { justify-content: space-between; padding: 0 12px; border-color: transparent; background: transparent; color: #8e9b91; }
 .end-turn-button > span { font-size: 16px; }
 .fast-track-button { width: 100%; margin-top: 7px; padding: 9px; border: 0; border-radius: 8px; background: rgba(237, 187, 91, .16); color: #f1c66e; font-size: 10px; font-weight: 700; cursor: pointer; }
 .fast-track-note { padding-top: 10px; color: #f1c66e; font-size: 10px; text-align: center; }
@@ -586,6 +593,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .repay-button:disabled { opacity: .4; cursor: not-allowed; }
 .loan-button { width: 100%; margin-top: 10px; padding: 8px; border: 1px solid rgba(227, 237, 221, .1); border-radius: 8px; background: transparent; color: #a2b09f; font-size: 9px; cursor: pointer; }
 .loan-button:hover { border-color: rgba(178, 239, 139, .28); color: var(--mint); }
+.loan-button:disabled { opacity: .4; cursor: not-allowed; }
 .empty-assets { padding: 10px 0; color: #78867a; font-size: 9px; line-height: 1.6; }
 .log-list { display: grid; gap: 3px; }
 .log-line { display: flex; gap: 8px; padding: 8px 0; border-bottom: 1px solid rgba(227, 237, 221, .055); color: #b2bdb1; font-size: 9px; line-height: 1.55; }
@@ -856,7 +864,8 @@ body { background: #fff9ed; color: #354536; }
 .event-card p { color: #78674d; }
 .event-accept { background: #9bc874; color: #273c28; }
 .event-decline { border-color: rgba(135, 119, 86, .2); background: #fffaf0; color: #71664f; }
-.end-turn-button { color: #70806f; }
+.end-turn-button { border-color: #9bc874; background: #9bc874; color: #273c28; box-shadow: 0 5px 14px rgba(112, 155, 76, .18); }
+.end-turn-button:hover:not(:disabled) { background: #add985; }
 .fast-track-button { background: #fff1cb; color: #92702b; }
 .fast-track-note { color: #92702b; }
 .section-heading > span { color: #808b7b; }

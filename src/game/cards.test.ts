@@ -117,9 +117,9 @@ describe('cards', () => {
     }
   })
 
-  it('has eight distinct personal opportunities isolated from the market and property pools', () => {
+  it('has nine distinct personal opportunities isolated from the market and property pools', () => {
     const pool = cards.filter(c => c.kind === 'opportunity' || c.kind === 'extraDice' || (c.kind === 'realEstate' && c.opportunity))
-    expect(pool).toHaveLength(8)
+    expect(pool).toHaveLength(9)
     pool.forEach((card, index) => {
       expect(cards[drawCardForDeck('opportunity', () => (index + 0.5) / pool.length)]).toBe(card)
     })
@@ -127,6 +127,12 @@ describe('cards', () => {
       for (let i = 0; i < cards.length; i++)
         expect(pool).not.toContain(cards[drawCardForDeck(deck, () => (i + 0.5) / cards.length)])
     }
+  })
+
+  it('unemployment sets three skipped turns without changing finances or the original player', () => {
+    const p = createPlayer('t', professions[0])
+    expect(applyAutoCard(p, find('失業'))).toEqual({ ...p, skipTurns: 3 })
+    expect(p.skipTurns).toBeUndefined()
   })
 
   it.each([

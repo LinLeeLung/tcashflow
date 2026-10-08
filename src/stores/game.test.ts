@@ -136,12 +136,39 @@ describe('turn order and historical market', () => {
   it('retains an unaffordable card until declined', async () => {
     const game = await startGame()
     rollEstate(game)
+    expect(game.cardPurchaseIssue).toContain('現金不足')
+    expect(game.cardPurchaseIssue).toContain('需要 $300,000')
+    expect(game.cardPurchaseIssue).toContain('目前現金 $150,000')
+    expect(game.cardPurchaseIssue).toContain('還差 $150,000')
     game.acceptCard()
+    expect(game.log[0]).toContain(game.cardPurchaseIssue)
     expect(game.card).not.toBeNull()
     expect(game.canEndTurn).toBe(false)
     game.player.cash = 500000
+    expect(game.cardPurchaseIssue).toBe('')
     game.acceptCard()
+    expect(game.cardPurchaseIssue).toBe('')
     expect(game.canEndTurn).toBe(true)
+  })
+
+  it('clears purchase warnings after borrowing or declining and explains online ownership', async () => {
+    const game = await startGame()
+    rollEstate(game)
+    game.loan(150000)
+    expect(game.cardPurchaseIssue).toBe('')
+    game.roomCode = '5852'
+    game.phase = 'playing'
+    game.player.ownerId = 'another-client'
+    expect(game.cardPurchaseIssue).toContain('只有目前回合的玩家')
+    const before = JSON.stringify(game.players)
+    game.acceptCard()
+    expect(JSON.stringify(game.players)).toBe(before)
+    expect(game.card).not.toBeNull()
+    game.player.ownerId = game.clientId
+    game.player.cash = 0
+    expect(game.cardPurchaseIssue).toContain('現金不足')
+    game.declineCard()
+    expect(game.cardPurchaseIssue).toBe('')
   })
 
   it('preserves expense, family, bonus, and global bonus landing effects', async () => {
@@ -208,11 +235,79 @@ describe('turn order and historical market', () => {
     expect(game.canEndTurn).toBe(true)
   })
 
+  it('unemployment skips exactly the next three turns and then restores normal play', async () => {
+    const game = await startGame()
+    game.player.position = 14
+    const salary = game.player.profession.salary
+    const other = JSON.stringify(game.players[1])
+    vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(8.5 / 9).mockReturnValue(0)
+    game.roll()
+    expect(game.player.skipTurns).toBe(3)
+    expect(game.skippingTurn).toBe(false)
+    expect(game.canEndTurn).toBe(true)
+    expect(JSON.stringify(game.players[1])).toBe(other)
+    game.endTurn()
+    expect(game.players[0]?.skipTurns).toBe(3)
+    for (let remaining = 3; remaining > 0; remaining--) {
+      game.player.position = 23
+      game.roll()
+      game.endTurn()
+      await vi.waitFor(() => expect(game.quotesLoading).toBe(false))
+      expect(game.turn).toBe(0)
+      expect(game.skippingTurn).toBe(true)
+      expect(game.canEndTurn).toBe(true)
+      expect(game.canRoll).toBe(false)
+      expect(game.canOpenStockMarket).toBe(false)
+      const assets = JSON.stringify(game.players)
+      game.roll()
+      game.loan(50000)
+      game.repay('信用卡', 1000)
+      game.openStockMarket()
+      game.tradeStock('buy', '2330', 1)
+      expect(JSON.stringify(game.players)).toBe(assets)
+      expect(game.player.profession.salary).toBe(salary)
+      game.endTurn()
+      expect(game.players[0]?.skipTurns).toBe(remaining - 1)
+    }
+    game.player.position = 23
+    game.roll()
+    game.endTurn()
+    await vi.waitFor(() => expect(game.quotesLoading).toBe(false))
+    expect(game.round).toBe(5)
+    expect(game.turn).toBe(0)
+    expect(game.skippingTurn).toBe(false)
+    expect(game.canRoll).toBe(true)
+  })
+
+  it('advances rounds when everyone is skipping and persists skip counts online', async () => {
+    const game = await startGame()
+    game.players.forEach(p => { p.skipTurns = 3 })
+    game.roomCode = '5852'
+    game.phase = 'playing'
+    game.player.ownerId = 'other'
+    game.endTurn()
+    expect(game.players[0]?.skipTurns).toBe(3)
+    game.players.forEach(p => { p.ownerId = game.clientId })
+    for (let round = 0; round < 3; round++) {
+      game.endTurn()
+      expect(game.turn).toBe(1)
+      game.endTurn()
+      await vi.waitFor(() => expect(game.quotesLoading).toBe(false))
+      expect(game.turn).toBe(0)
+    }
+    expect(game.players.map(p => p.skipTurns)).toEqual([0, 0])
+    expect(game.round).toBe(4)
+    expect(game.canRoll).toBe(true)
+    expect(vi.mocked(updateDoc).mock.calls.at(-1)?.[1]).toMatchObject({
+      game: { players: [expect.objectContaining({ skipTurns: 0 }), expect.objectContaining({ skipTurns: 0 })] },
+    })
+  })
+
   it('adds two dice immediately, resolves the new market event, and prevents duplicate rolls', async () => {
     const game = await startGame()
     game.player.position = 14
     const cash = game.player.cash
-    vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(6.5 / 8)
+    vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(6.5 / 9)
       .mockReturnValueOnce(0).mockReturnValueOnce(0.99).mockReturnValueOnce(0)
     game.roll()
     expect(game.pendingExtraDice).toBe(2)
@@ -241,7 +336,7 @@ describe('turn order and historical market', () => {
     game.player.position = 14
     const cash = game.player.cash
     const flow = summarize(game.player).monthlyCashFlow
-    vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(7.5 / 8)
+    vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(7.5 / 9)
       .mockReturnValueOnce(0.99).mockReturnValueOnce(0.99).mockReturnValueOnce(0.99)
     game.roll()
     expect(game.pendingExtraDice).toBe(3)
@@ -258,7 +353,7 @@ describe('turn order and historical market', () => {
   it('keeps a destination purchase pending after extra dice and denies another client the extra roll', async () => {
     const game = await startGame()
     game.player.position = 14
-    vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(6.5 / 8)
+    vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(6.5 / 9)
       .mockReturnValueOnce(0.99).mockReturnValueOnce(0.99).mockReturnValueOnce(0)
     game.roll()
     game.roomCode = '5852'
@@ -281,7 +376,7 @@ describe('turn order and historical market', () => {
     const game = await startGame()
     game.player.position = 14
     const cash = game.players.map(p => p.cash)
-    vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(4.5 / 8)
+    vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(4.5 / 9)
     game.roll()
     expect(game.card?.title).toBe('合夥行動咖啡攤')
     expect(game.players.map(p => p.cash)).toEqual(cash)
@@ -299,7 +394,7 @@ describe('turn order and historical market', () => {
     game.player.position = 14
     game.player.cash = 10000
     const other = { ...game.players[1]! }
-    vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(5.5 / 8)
+    vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(5.5 / 9)
     game.roll()
     expect(game.card?.title).toBe('二手自動販賣機經營權')
     game.acceptCard()
@@ -583,6 +678,46 @@ describe('turn order and historical market', () => {
     expect(game.gameOver).toBe(false)
   })
 
+  it('blocks unlimited borrowing to buy stocks and reports excess loans without changing assets', async () => {
+    const game = await startGame()
+    for (let i = 0; i < 10; i++) game.loan(50000)
+    const before = JSON.stringify(game.players)
+    game.loan(50000)
+    expect(JSON.stringify(game.players)).toBe(before)
+    expect(game.log[0]).toContain('銀行貸款不可超過月薪 6 倍')
+    game.loan(10000)
+    expect(game.player.liabilities.find(l => l.name === '銀行貸款')?.balance).toBe(510000)
+    game.openStockMarket()
+    game.tradeStock('buy', '2330', Math.floor(game.player.cash / 100.25))
+    expect(game.summary?.passiveIncome).toBe(65830)
+    expect(game.summary?.totalExpenses).toBe(79200)
+    expect(game.gameOver).toBe(false)
+    game.loan(50000)
+    expect(game.log[0]).toContain('剩餘額度 0')
+    expect(game.winners).toEqual([])
+  })
+
+  it('enforces the same borrowing cap online and rejects another player borrowing', async () => {
+    const game = await startGame()
+    game.roomCode = '5852'
+    game.phase = 'playing'
+    game.player.ownerId = game.clientId
+    game.loan(510000)
+    expect(vi.mocked(updateDoc).mock.calls.at(-1)?.[1]).toMatchObject({
+      game: { players: [expect.objectContaining({
+        liabilities: expect.arrayContaining([{ name: '銀行貸款', balance: 510000, monthlyPayment: 10200 }]),
+      }), expect.anything()] },
+    })
+    const before = JSON.stringify(game.players)
+    game.loan(50000)
+    expect(JSON.stringify(game.players)).toBe(before)
+    expect(game.log[0]).toContain('銀行貸款不可超過月薪 6 倍')
+    game.player.ownerId = 'another-client'
+    game.repay('銀行貸款', 50000)
+    game.loan(50000)
+    expect(game.player.liabilities.find(l => l.name === '銀行貸款')?.balance).toBe(510000)
+  })
+
   it('wins through reduced expenses after a partial bank repayment', async () => {
     const game = await startGame()
     game.loan(50000)
@@ -631,7 +766,7 @@ describe('turn order and historical market', () => {
     expect(game.gameOver).toBe(false)
     game.player.stocks = [{ symbol: '2330', shares: 6900, cost: 1, dividend: 10 }]
     game.player.position = 14
-    vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(5.5 / 8)
+    vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(5.5 / 9)
     game.roll()
     expect(game.gameOver).toBe(false)
     game.acceptCard()

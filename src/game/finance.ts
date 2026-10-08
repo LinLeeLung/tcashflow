@@ -143,14 +143,28 @@ export function repayLiability(p: Player, name: string, amount: number): Player 
   return { ...p, cash: Math.round((p.cash - pay) * 100) / 100, liabilities }
 }
 
-/** 借款：增加現金與負債，月付 = 本金 * 月利率 */
+export function bankLoanCredit(p: Player) {
+  const limit = Math.round(p.profession.salary * 6 * 100) / 100
+  const balance = Math.round(p.liabilities
+    .filter(l => l.name === '銀行貸款')
+    .reduce((total, l) => total + l.balance, 0) * 100) / 100
+  return { limit, balance, available: Math.max(0, Math.round((limit - balance) * 100) / 100) }
+}
+
+/** 借款：未償本金上限為月薪六倍，月付 = 本金 * 月利率 */
 export function borrow(p: Player, amount: number, monthlyRate = 0.02): Player {
+  if (!Number.isFinite(amount) || amount <= 0 || !Number.isSafeInteger(Math.round(amount * 100))
+    || Math.abs(amount * 100 - Math.round(amount * 100)) > 1e-6)
+    throw new Error('借款金額必須大於零，最多兩位小數')
+  const credit = bankLoanCredit(p)
+  if (amount > credit.available)
+    throw new Error(`銀行貸款不可超過月薪 6 倍（上限 ${credit.limit}，剩餘額度 ${credit.available}）`)
   const add = Math.round(amount * monthlyRate)
   const existing = p.liabilities.find(l => l.name === '銀行貸款')
   const liabilities = existing
-    ? p.liabilities.map(l => (l === existing ? { ...l, balance: l.balance + amount, monthlyPayment: l.monthlyPayment + add } : l))
+    ? p.liabilities.map(l => (l === existing ? { ...l, balance: Math.round((l.balance + amount) * 100) / 100, monthlyPayment: l.monthlyPayment + add } : l))
     : [...p.liabilities, { name: '銀行貸款', balance: amount, monthlyPayment: add }]
-  return { ...p, cash: p.cash + amount, liabilities }
+  return { ...p, cash: Math.round((p.cash + amount) * 100) / 100, liabilities }
 }
 
 export function move(p: Player, steps: number): { player: Player; passedPayday: boolean } {
