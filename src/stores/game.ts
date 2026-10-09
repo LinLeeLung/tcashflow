@@ -27,6 +27,7 @@ export const useGameStore = defineStore('game', () => {
   const players = ref<Player[]>([])
   const turn = ref(0)
   const cardIdx = ref<number | null>(null)
+  const lastCardIdx = ref<number | null>(null)
   const log = ref<string[]>([])
   const lastDice = ref(0)
   const diceResults = ref<number[]>([])
@@ -39,7 +40,10 @@ export const useGameStore = defineStore('game', () => {
   const settledMarketDate = ref('2020-01-01')
   const historyComplete = ref(false)
   const winners = ref<Winner[]>([])
-  const gameOver = computed(() => winners.value.length > 0)
+  const cashEffect = ref<{ id: number; type: 'income' | 'expense' } | null>(null)
+  let cashEffectId = 0
+  const gameOver = computed(() => winners.value.length > 0
+    || (players.value.length > 0 && players.value.every(p => p.bankrupt)))
   const quotesLoading = ref(false)
   const quoteError = ref('')
   const tradeMessage = ref('')
@@ -54,7 +58,10 @@ export const useGameStore = defineStore('game', () => {
 
   const online = computed(() => roomCode.value !== null)
   const player = computed(() => players.value[turn.value] ?? null)
+  const cashRecoveryRequired = computed(() => !!player.value
+    && (!!player.value.cashRecoveryRequired || player.value.cash < 0))
   const card = computed(() => (cardIdx.value === null ? null : cards[cardIdx.value] ?? null))
+  const lastDrawnCard = computed(() => (lastCardIdx.value === null ? null : cards[lastCardIdx.value] ?? null))
   const summary = computed(() => (player.value ? fin.summarize(player.value) : null))
   const isHost = computed(() => hostId.value === clientId)
   const myTurn = computed(() => !online.value || player.value?.ownerId === clientId)
@@ -72,22 +79,27 @@ export const useGameStore = defineStore('game', () => {
     const money = (value: number) => value.toLocaleString('zh-TW', { maximumFractionDigits: 2 })
     return `現金不足：需要 $${money(cost)}，目前現金 $${money(player.value.cash)}，還差 $${money(cost - player.value.cash)}。可賣股或在剩餘額度內借款，也可放棄此卡。`
   })
-  const canRollExtra = computed(() => inGame.value && myTurn.value && !gameOver.value && pendingExtraDice.value > 0)
-  const canRoll = computed(() => inGame.value && myTurn.value && !gameOver.value && !skippingTurn.value && !pendingExtraDice.value && lastDice.value === 0 && cardIdx.value === null && !stockMarketOpen.value
+  const canRollExtra = computed(() => inGame.value && myTurn.value && !gameOver.value && !cashRecoveryRequired.value && pendingExtraDice.value > 0)
+  const canRoll = computed(() => inGame.value && myTurn.value && !gameOver.value && !cashRecoveryRequired.value && !skippingTurn.value && !pendingExtraDice.value && lastDice.value === 0 && cardIdx.value === null && !stockMarketOpen.value
     && stockQuotes.value.length > 0 && !quotesLoading.value && !quoteError.value && !historyComplete.value)
-  const canEndTurn = computed(() => inGame.value && myTurn.value && !gameOver.value && !pendingExtraDice.value && (lastDice.value > 0 || skippingTurn.value) && cardIdx.value === null && !stockMarketOpen.value)
-  const canOpenStockMarket = computed(() => inGame.value && myTurn.value && !gameOver.value && !skippingTurn.value && !pendingExtraDice.value && !stockMarketOpen.value
-    && stockQuotes.value.length > 0 && !quotesLoading.value && !quoteError.value && !historyComplete.value)
-  const canTradeStocks = computed(() => inGame.value && myTurn.value && !gameOver.value && !skippingTurn.value && stockMarketOpen.value
-    && stockQuotes.value.length > 0 && !quotesLoading.value && !quoteError.value && !historyComplete.value)
+  const canEndTurn = computed(() => inGame.value && myTurn.value && !gameOver.value && !cashRecoveryRequired.value && !pendingExtraDice.value && (lastDice.value > 0 || skippingTurn.value) && cardIdx.value === null && !stockMarketOpen.value)
+  const canOpenStockMarket = computed(() => inGame.value && myTurn.value && !gameOver.value && (!skippingTurn.value || cashRecoveryRequired.value) && !pendingExtraDice.value && !stockMarketOpen.value
+    && stockQuotes.value.length > 0 && !quotesLoading.value && !quoteError.value && (!historyComplete.value || cashRecoveryRequired.value))
+  const canTradeStocks = computed(() => inGame.value && myTurn.value && !gameOver.value && (!skippingTurn.value || cashRecoveryRequired.value) && stockMarketOpen.value
+    && stockQuotes.value.length > 0 && !quotesLoading.value && !quoteError.value && (!historyComplete.value || cashRecoveryRequired.value))
 
   function note(msg: string) {
     log.value = [msg, ...log.value].slice(0, 50)
   }
 
+  function markCashEffect(before: number, after: number) {
+    if (before === after) return
+    cashEffect.value = { id: ++cashEffectId, type: after > before ? 'income' : 'expense' }
+  }
+
   function gameState() {
     return clean({
-      players: players.value, turn: turn.value, cardIdx: cardIdx.value, log: log.value, lastDice: lastDice.value,
+      players: players.value, turn: turn.value, cardIdx: cardIdx.value, lastCardIdx: lastCardIdx.value, log: log.value, lastDice: lastDice.value,
       stockMarketOpen: stockMarketOpen.value, stockQuotes: stockQuotes.value,
       marketDate: marketDate.value, nextMarketDate: nextMarketDate.value, round: round.value,
       settledMarketDate: settledMarketDate.value,
@@ -99,15 +111,16 @@ export const useGameStore = defineStore('game', () => {
 
   function commit() {
     checkVictory()
-    if (!roomCode.value) return
-    updateDoc(doc(db, 'rooms', roomCode.value), { game: gameState() }).catch(e => (error.value = String(e)))
+    const turnChanged = resolveBankruptcies()
+    if (roomCode.value) updateDoc(doc(db, 'rooms', roomCode.value), { game: gameState() }).catch(e => (error.value = String(e)))
+    if (turnChanged && player.value && !stockQuotes.value.length && !historyComplete.value) void loadStockQuotes()
   }
 
   function checkVictory() {
     if (gameOver.value) return
     const achieved = players.value.flatMap((p, playerIndex) => {
       const s = fin.summarize(p)
-      return s.canFastTrack ? [{ playerIndex, name: p.name, passiveIncome: s.passiveIncome, totalExpenses: s.totalExpenses }] : []
+      return !p.bankrupt && p.cash > 0 && s.canFastTrack ? [{ playerIndex, name: p.name, passiveIncome: s.passiveIncome, totalExpenses: s.totalExpenses }] : []
     })
     if (!achieved.length) return
     winners.value = achieved
@@ -116,6 +129,64 @@ export const useGameStore = defineStore('game', () => {
     cardIdx.value = null
     pendingExtraDice.value = 0
     note(`🏆 ${achieved.map(w => w.name).join('、')}${achieved.length > 1 ? '並列獲勝' : '獲勝'}：被動收入已達每月總支出，遊戲結束`)
+  }
+
+  function rescueCapacity(p: Player): number {
+    const credit = fin.bankLoanCredit(p).available
+    const stockValue = p.stocks.reduce((total, stock) => {
+      const quote = stockQuotes.value.find(item => item.symbol === stock.symbol && item.date === marketDate.value)
+      return total + stock.shares * (quote?.price ?? 0)
+    }, 0)
+    return Math.round((p.cash + credit + stockValue) * 100) / 100
+  }
+
+  function advanceTurnState(): boolean {
+    const current = turn.value
+    const next = players.value.findIndex((p, index) => index > current && !p.bankrupt)
+    const nextTurn = next >= 0 ? next : players.value.findIndex(p => !p.bankrupt)
+    if (nextTurn < 0) return false
+    const wrapped = nextTurn <= current
+    cardIdx.value = null
+    lastCardIdx.value = null
+    lastDice.value = 0
+    diceResults.value = []
+    pendingExtraDice.value = 0
+    resetStockMarket()
+    if (wrapped) {
+      if (nextMarketDate.value === null) {
+        historyComplete.value = true
+        turn.value = nextTurn
+        note('歷史行情已到最後可用交易日，本局停止推進；可重新開始遊戲')
+        return true
+      }
+      marketDate.value = nextMarketDate.value
+      stockQuotes.value = []
+      round.value++
+    }
+    turn.value = nextTurn
+    note('輪到 ' + player.value!.name)
+    return true
+  }
+
+  function resolveBankruptcies(): boolean {
+    players.value = players.value.map(p => {
+      if (p.bankrupt) return p
+      const recoveryRequired = p.cash < 0 || (!!p.cashRecoveryRequired && p.cash <= 0)
+      if (!recoveryRequired) return p.cashRecoveryRequired ? { ...p, cashRecoveryRequired: false } : p
+      return { ...p, cashRecoveryRequired: true }
+    })
+    let turnChanged = false
+    const eliminatedNames: string[] = []
+    while (player.value?.cashRecoveryRequired && rescueCapacity(player.value) <= 0) {
+      const eliminated = player.value
+      players.value[turn.value] = { ...eliminated, bankrupt: true }
+      eliminatedNames.push(eliminated.name)
+      if (!advanceTurnState()) break
+      turnChanged = true
+      if (players.value.every(p => p.bankrupt)) break
+    }
+    if (eliminatedNames.length) note(`${eliminatedNames.join('、')} 無法將現金補回正數，破產出局`)
+    return turnChanged
   }
 
   function begin(list: Player[]) {
@@ -127,9 +198,11 @@ export const useGameStore = defineStore('game', () => {
     settledMarketDate.value = '2020-01-01'
     historyComplete.value = false
     winners.value = []
+    cashEffect.value = null
     players.value = list
     turn.value = 0
     cardIdx.value = null
+    lastCardIdx.value = null
     lastDice.value = 0
     diceResults.value = []
     pendingExtraDice.value = 0
@@ -161,6 +234,7 @@ export const useGameStore = defineStore('game', () => {
         players.value = d.game.players
         turn.value = d.game.turn
         cardIdx.value = d.game.cardIdx
+        lastCardIdx.value = d.game.lastCardIdx ?? null
         log.value = d.game.log
         lastDice.value = d.game.lastDice
         diceResults.value = d.game.diceResults ?? (d.game.lastDice ? [d.game.lastDice] : [])
@@ -252,15 +326,20 @@ export const useGameStore = defineStore('game', () => {
     players.value = []
     winners.value = []
     cardIdx.value = null
+    lastCardIdx.value = null
     lastDice.value = 0
     pendingExtraDice.value = 0
     diceResults.value = []
   }
 
   // ---- 遊戲動作（連線時僅輪到的玩家可操作）----
-  function guard(allowSkippedTurn = false): boolean {
-    if (!player.value || !myTurn.value || gameOver.value || pendingExtraDice.value) return false
-    if (skippingTurn.value && !allowSkippedTurn) {
+  function guard(allowSkippedTurn = false, allowCashRecovery = false): boolean {
+    if (!player.value || player.value.bankrupt || !myTurn.value || gameOver.value || pendingExtraDice.value) return false
+    if (cashRecoveryRequired.value && !allowCashRecovery) {
+      note('⚠ 現金為負，請先賣股或借款補回正數')
+      return false
+    }
+    if (skippingTurn.value && !allowSkippedTurn && !(allowCashRecovery && cashRecoveryRequired.value)) {
       note('⚠ 失業停玩期間只能跳過回合，不能擲骰、交易或借還款')
       return false
     }
@@ -281,24 +360,9 @@ export const useGameStore = defineStore('game', () => {
       players.value[turn.value] = { ...player.value!, skipTurns: remaining }
       note(`${player.value!.name} 失業，跳過本回合；${remaining ? `尚需停玩 ${remaining} 回合` : '下次回合恢復操作'}`)
     }
-    cardIdx.value = null
-    lastDice.value = 0
-    diceResults.value = []
-    resetStockMarket()
-    if (turn.value === players.value.length - 1 && nextMarketDate.value === null) {
-      historyComplete.value = true
-      note('歷史行情已到最後可用交易日，本局停止推進；可重新開始遊戲')
-      commit()
-      return
-    } else if (turn.value === players.value.length - 1) {
-      marketDate.value = nextMarketDate.value!
-      stockQuotes.value = []
-    }
-    turn.value = (turn.value + 1) % players.value.length
-    if (turn.value === 0) round.value++
-    note('輪到 ' + player.value!.name)
+    advanceTurnState()
     commit()
-    if (!stockQuotes.value.length) void loadStockQuotes()
+    if (player.value && !stockQuotes.value.length && !historyComplete.value) void loadStockQuotes()
   }
 
   function update(fn: (p: Player) => Player, msg: string): boolean {
@@ -319,6 +383,7 @@ export const useGameStore = defineStore('game', () => {
       note('⚠ 每位玩家每回合只能擲骰一次，請處理事件並結束回合')
       return
     }
+    lastCardIdx.value = null
     const dice = 1 + Math.floor(Math.random() * 6)
     lastDice.value = dice
     diceResults.value = [dice]
@@ -340,7 +405,11 @@ export const useGameStore = defineStore('game', () => {
   function moveAndResolve(dice: number) {
     const { player: moved, passedPayday } = fin.move(player.value!, dice)
     players.value[turn.value] = moved
-    if (passedPayday) update(fin.payday, '經過發薪日，自動領取月現金流')
+    if (passedPayday) {
+      const cashBeforePayday = player.value!.cash
+      update(fin.payday, '經過發薪日，自動領取月現金流')
+      markCashEffect(cashBeforePayday, player.value!.cash)
+    }
     const space = spaces[moved.position]
     note(`停在第 ${moved.position + 1} 格・${space.name}`)
     if (space.deck === null) {
@@ -353,6 +422,7 @@ export const useGameStore = defineStore('game', () => {
     }
     const idx = drawCardForDeck(space.deck)
     const c = cards[idx]
+    lastCardIdx.value = idx
     if (c.kind === 'extraDice') {
       cardIdx.value = null
       pendingExtraDice.value = c.dice
@@ -362,10 +432,15 @@ export const useGameStore = defineStore('game', () => {
     } else {
       cardIdx.value = null
       if ((c.kind === 'market' || c.kind === 'bonus') && c.global) {
+        const cashBeforeEvent = players.value.reduce((total, p) => total + p.cash, 0)
         players.value = players.value.map(p => applyAutoCard(p, c))
+        const cashAfterEvent = players.value.reduce((total, p) => total + p.cash, 0)
+        markCashEffect(cashBeforeEvent, cashAfterEvent)
         note(`全體事件・${c.title}：${c.desc}`)
       } else {
+        const cashBeforeEvent = player.value!.cash
         update(p => applyAutoCard(p, c), `${c.title}：${c.desc}`)
+        markCashEffect(cashBeforeEvent, player.value!.cash)
       }
     }
     commit()
@@ -378,11 +453,15 @@ export const useGameStore = defineStore('game', () => {
       return
     }
     if (!c || !guard()) return
+    const cashBeforePurchase = player.value!.cash
     const ok =
       c.kind === 'stock' ? update(p => fin.buyStock(p, c.stock), `買進 ${c.title}`)
       : c.kind === 'realEstate' ? update(p => fin.buyRealEstate(p, c.asset), `買進 ${c.title}`)
       : true
-    if (ok) cardIdx.value = null
+    if (ok) {
+      markCashEffect(cashBeforePurchase, player.value!.cash)
+      cardIdx.value = null
+    }
     commit()
   }
 
@@ -459,6 +538,11 @@ export const useGameStore = defineStore('game', () => {
       note(tradeMessage.value)
       return
     }
+    if (side === 'buy' && cashRecoveryRequired.value) {
+      tradeMessage.value = '⚠ 現金為負時只能賣股或借款，請先將現金補回正數'
+      note(tradeMessage.value)
+      return
+    }
     const quote = stockQuotes.value.find(item => item.symbol === symbol)
     const stock = stockCatalogue.find(item => item.symbol === symbol)
     if (!quote || !stock || quote.date !== marketDate.value || quotesLoading.value || quoteError.value) {
@@ -479,7 +563,7 @@ export const useGameStore = defineStore('game', () => {
   }
 
   function closeStockMarket() {
-    if (!guard() || !stockMarketOpen.value) return
+    if (!guard(true, true) || !stockMarketOpen.value) return
     resetStockMarket()
     note(lastDice.value === 0 ? '離開股票市場，請擲骰繼續回合'
       : cardIdx.value !== null ? '離開股票市場，請先處理事件卡'
@@ -487,21 +571,21 @@ export const useGameStore = defineStore('game', () => {
     commit()
   }
 
-  function act(fn: () => void) {
-    if (!guard()) return
+  function act(fn: () => void, allowCashRecovery = false) {
+    if (!guard(false, allowCashRecovery)) return
     fn()
     commit()
   }
 
   function declineCard() { act(() => { cardIdx.value = null }) }
   function repay(name: string, amount: number) { act(() => { update(p => fin.repayLiability(p, name, amount), `償還 ${name} ${amount}`) }) }
-  function loan(amount: number) { act(() => { update(p => fin.borrow(p, amount), `向銀行借款 ${amount}`) }) }
+  function loan(amount: number) { act(() => { update(p => fin.borrow(p, amount), `向銀行借款 ${amount}`) }, true) }
   function enterFastTrack() {
     if (guard()) commit()
   }
 
   return {
-    clientId, players, turn, player, card, cardPurchaseIssue, log, lastDice, summary, winners, gameOver, diceResults, pendingExtraDice, canRollExtra, skippingTurn,
+    clientId, players, turn, player, card, lastDrawnCard, cardPurchaseIssue, log, lastDice, summary, winners, gameOver, cashRecoveryRequired, cashEffect, diceResults, pendingExtraDice, canRollExtra, skippingTurn,
     stockMarketOpen, stockQuotes, quotesLoading, quoteError, tradeMessage, canOpenStockMarket, canTradeStocks, marketDate, nextMarketDate, round, historyComplete,
     roomCode, phase, members, hostId, error, online, isHost, myTurn, inGame, canRoll, canEndTurn,
     start, createRoom, joinRoom, updateMe, startOnline, leaveRoom, resetGame,

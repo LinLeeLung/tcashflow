@@ -84,9 +84,38 @@ describe('turn order and historical market', () => {
     game.endTurn()
     expect(game.turn).toBe(0)
     expect(game.card).not.toBeNull()
+    expect(game.lastDrawnCard?.title).toBe(game.card?.title)
+    expect(game.lastDrawnCard?.desc).toBe(game.card?.desc)
     finish(game)
     expect(game.player.name).toBe('B')
+    expect(game.lastDrawnCard).toBeNull()
     expect(game.canRoll).toBe(true)
+  })
+
+  it('retains the contents of automatically resolved cards for the turn result', async () => {
+    const game = await startGame()
+    game.player.position = 1
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    game.roll()
+    expect(game.card).toBeNull()
+    expect(game.lastDrawnCard?.title).toBe('央行升息半碼')
+    expect(game.lastDrawnCard?.desc).toBe('全體房貸月付增加 1,500')
+  })
+
+  it('marks income and expense events with distinct cash-effect types', async () => {
+    const game = await startGame()
+    game.player.position = 3
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    game.roll()
+    expect(game.lastDrawnCard?.kind).toBe('doodad')
+    expect(game.cashEffect?.type).toBe('expense')
+
+    game.declineCard()
+    game.endTurn()
+    game.player.position = 4
+    game.roll()
+    expect(game.lastDrawnCard?.kind).toBe('bonus')
+    expect(game.cashEffect?.type).toBe('income')
   })
 
   it('retains the exact same snapshot for every player in a round', async () => {
@@ -716,6 +745,77 @@ describe('turn order and historical market', () => {
     game.repay('銀行貸款', 50000)
     game.loan(50000)
     expect(game.player.liabilities.find(l => l.name === '銀行貸款')?.balance).toBe(510000)
+  })
+
+  it('requires a negative-cash player to sell stock or borrow until cash is positive', async () => {
+    const game = await startGame()
+    game.player.cash = -100
+    game.player.stocks = [{ symbol: '2330', shares: 1, cost: 100.25, dividend: 1 }]
+    expect(game.cashRecoveryRequired).toBe(true)
+    expect(game.canRoll).toBe(false)
+    expect(game.canEndTurn).toBe(false)
+    game.openStockMarket()
+    expect(game.canTradeStocks).toBe(true)
+    game.tradeStock('sell', '2330', 1)
+    expect(game.player.cash).toBe(0.25)
+    expect(game.cashRecoveryRequired).toBe(false)
+    expect(game.player.stocks).toEqual([])
+  })
+
+  it('allows a precise bank loan to restore positive cash', async () => {
+    const game = await startGame()
+    game.player.cash = -100
+    game.loan(100.01)
+    expect(game.player.cash).toBe(0.01)
+    expect(game.cashRecoveryRequired).toBe(false)
+  })
+
+  it('eliminates an unsalvageable current player and advances to the next active player', async () => {
+    const game = await startGame()
+    game.roomCode = '5852'
+    game.phase = 'playing'
+    game.player.ownerId = game.clientId
+    game.loan(510000)
+    game.player.cash = -1
+    game.loan(0.01)
+    expect(game.players[0]?.bankrupt).toBe(true)
+    expect(game.turn).toBe(1)
+    expect(game.player.name).toBe('B')
+    expect(game.gameOver).toBe(false)
+    expect(game.log.some(entry => entry.includes('破產出局'))).toBe(true)
+    expect(vi.mocked(updateDoc).mock.calls.at(-1)?.[1]).toMatchObject({
+      game: {
+        turn: 1,
+        players: [expect.objectContaining({ bankrupt: true, cashRecoveryRequired: true }), expect.anything()],
+      },
+    })
+  })
+
+  it('does not bankrupt a different player until their turn and ends when everyone is bankrupt', async () => {
+    const game = await startGame()
+    game.loan(510000)
+    game.players[1]!.cash = -1
+    game.players[1]!.liabilities.push({ name: '銀行貸款', balance: 510000, monthlyPayment: 10200 })
+    game.loan(0.01)
+    expect(game.players[1]?.bankrupt).toBeFalsy()
+    expect(game.players[1]?.cashRecoveryRequired).toBe(true)
+    game.player.cash = -1
+    game.loan(0.01)
+    expect(game.gameOver).toBe(true)
+    expect(game.winners).toEqual([])
+    expect(game.players.every(player => player.bankrupt)).toBe(true)
+  })
+
+  it('does not award victory to a player with negative cash', async () => {
+    const game = await startGame()
+    game.player.profession.taxes = 0
+    game.player.profession.otherExpenses = 1000
+    game.player.liabilities = []
+    game.player.stocks = [{ symbol: '2330', shares: 100, cost: 1, dividend: 10 }]
+    game.player.cash = -1
+    game.loan(1)
+    expect(game.gameOver).toBe(false)
+    expect(game.winners).toEqual([])
   })
 
   it('wins through reduced expenses after a partial bank repayment', async () => {

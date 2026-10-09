@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyAutoCard, cards, drawCardForDeck } from './cards'
-import { buyStock, createPlayer } from './finance'
+import { buyStock, createPlayer, summarize } from './finance'
 import { professions } from './professions'
 import { spaces } from './board'
 import { BOARD_SIZE } from './finance'
@@ -78,6 +78,21 @@ describe('cards', () => {
   it('stock crash reduces cash by 20% of holdings', () => {
     const p = buyStock(createPlayer('t', professions[0]), { symbol: '2330', shares: 100, cost: 600, dividend: 10 })
     expect(applyAutoCard(p, find('股災')).cash).toBe(p.cash - 12000)
+  })
+
+  it('keeps an all-in Evergreen purchase below monthly expenses at the early historical price', () => {
+    const evergreen = find('買進長榮')
+    expect(evergreen.kind).toBe('stock')
+    if (evergreen.kind !== 'stock') return
+    expect(evergreen.stock.dividend).toBe(0.4)
+    const player = { ...createPlayer('t', professions[1]), cash: 550000 }
+    const allIn = buyStock(player, {
+      ...evergreen.stock, shares: Math.floor(player.cash / 12.7), cost: 12.7,
+    })
+    const summary = summarize(allIn)
+    expect(summary.passiveIncome).toBeCloseTo(17322.8)
+    expect(summary.passiveIncome).toBeLessThan(summary.totalExpenses)
+    expect(summary.canFastTrack).toBe(false)
   })
 
   it('rate hike raises mortgage payment only', () => {

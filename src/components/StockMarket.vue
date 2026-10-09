@@ -26,9 +26,22 @@ const averageCost = (symbol: string) => {
 }
 const amount = computed(() => selectedQuote.value && validQuantity.value
   ? Math.round(selectedQuote.value.price * shares.value * 100) / 100 : null)
+const maximumBuyShares = computed(() => {
+  const cash = g.player?.cash ?? 0
+  const price = selectedQuote.value?.price
+  if (!price || cash <= 0) return 0
+  let maximum = Math.floor((cash + 1e-8) / price)
+  if (!Number.isSafeInteger(maximum)) return 0
+  while (maximum > 0 && Math.round(maximum * price * 100) / 100 > cash) maximum--
+  return maximum
+})
 const canTrade = computed(() => g.canTradeStocks && !g.quotesLoading && !g.quoteError && !!selectedQuote.value && validQuantity.value)
 const money = (value: number) => value.toLocaleString('zh-TW', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const quoteDate = computed(() => g.stockQuotes[0]?.date ?? '')
+function buyWithAvailableCash() {
+  if (!canTrade.value || maximumBuyShares.value < 1) return
+  g.tradeStock('buy', selectedSymbol.value, maximumBuyShares.value)
+}
 const quotePrice = (symbol: string) => {
   const quote = g.stockQuotes.find(item => item.symbol === symbol)
   return quote ? '$' + money(quote.price) : '無可用報價'
@@ -41,8 +54,9 @@ onMounted(() => panel.value?.scrollIntoView({ behavior: 'smooth', block: 'start'
   <section ref="panel" class="stock-market finance-panel" aria-labelledby="stock-market-title">
     <div class="stock-market-heading">
       <div><span class="eyebrow">TAIWAN STOCK MARKET</span><h2 id="stock-market-title">📈 台股交易市場</h2></div>
-      <button class="secondary-button market-close" @click="g.closeStockMarket()">離開市場 →</button>
+      <button type="button" class="market-close" @click="g.closeStockMarket()">離開市場，返回棋盤 <span aria-hidden="true">→</span></button>
     </div>
+    <p v-if="g.cashRecoveryRequired" class="cash-recovery-alert" role="alert">現金危機救援模式：只能賣出持股，或到資產面板借款；現金補回正數後即可恢復正常遊戲。</p>
     <p class="market-description">自由玩法 · 目前玩家：{{ g.player?.name }} · 自己的回合可在擲骰前後買賣，離開後可再次進入。買進 1 股起；減資後的小數持股也可賣出。離開市場後才能擲骰或結束回合。</p>
     <div class="market-source">
       <span>資料來源：台灣證券交易所 · 第 {{ g.round }} 輪 · {{ quoteDate ? `${quoteDate} 歷史收盤價` : '等待歷史行情' }}</span>
@@ -67,7 +81,13 @@ onMounted(() => panel.value?.scrollIntoView({ behavior: 'smooth', block: 'start'
       </div>
       <div class="market-order">
         <h3>{{ selectedQuote?.name ?? selectedStock?.name }} <small>{{ selectedSymbol }}</small></h3>
-        <div class="market-balance"><span>可用現金</span><strong>${{ money(g.player?.cash ?? 0) }}</strong></div>
+        <div class="market-balance">
+          <span>可用現金</span>
+          <div class="market-balance-actions">
+            <strong>${{ money(g.player?.cash ?? 0) }}</strong>
+            <button v-if="!g.cashRecoveryRequired" class="market-all-in" :disabled="!canTrade || maximumBuyShares < 1" :aria-label="`使用現有現金全數買入，最多 ${maximumBuyShares} 股`" @click="buyWithAvailableCash">全數買入</button>
+          </div>
+        </div>
         <label class="field-label" for="stock-quantity">股數（買進正整數／賣出可含小數）
           <input id="stock-quantity" v-model="quantity" type="number" min="0.000001" step="0.000001" inputmode="decimal" class="form-field" :aria-invalid="!validQuantity" />
         </label>
@@ -80,7 +100,7 @@ onMounted(() => panel.value?.scrollIntoView({ behavior: 'smooth', block: 'start'
         <p class="market-disclaimer">成本只計目前仍持有的股票；分批買進按股數加權，賣出依先買先賣扣除成本。分割及減資會調整成本，不含股利、消息卡現金收支或交易費用。</p>
         <p class="market-dividend">遊戲每股每月股利：${{ money(historicalDividend(selectedSymbol, selectedStock?.dividend ?? 0, g.marketDate)) }}（模擬值）</p>
         <div class="market-trade-actions">
-          <button class="event-accept" :disabled="!canTrade || !validBuyQuantity || amount === null || amount > (g.player?.cash ?? 0)" @click="g.tradeStock('buy', selectedSymbol, shares)">買進</button>
+          <button v-if="!g.cashRecoveryRequired" class="event-accept" :disabled="!canTrade || !validBuyQuantity || amount === null || amount > (g.player?.cash ?? 0)" @click="g.tradeStock('buy', selectedSymbol, shares)">買進</button>
           <button class="event-decline" :disabled="!canTrade || shares > owned(selectedSymbol)" @click="g.tradeStock('sell', selectedSymbol, shares)">賣出</button>
         </div>
         <p v-if="amount !== null && amount > (g.player?.cash ?? 0)" class="market-error">現金不足，請調整股數或使用資產面板借款。</p>

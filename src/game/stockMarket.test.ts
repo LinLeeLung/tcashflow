@@ -21,7 +21,8 @@ describe('TWSE closing quotes', () => {
   it('uses action-adjusted simulated dividends for purchases after corporate actions', () => {
     expect(historicalDividend('0050', 2, '2025-06-17')).toBe(2)
     expect(historicalDividend('0050', 2, '2025-06-18')).toBe(0.5)
-    expect(historicalDividend('2603', 4, '2022-09-19')).toBe(10)
+    expect(historicalDividend('2603', 0.4, '2022-09-18')).toBe(0.4)
+    expect(historicalDividend('2603', 0.4, '2022-09-19')).toBe(1)
     expect(historicalDividend('2330', 10, '2026-01-02')).toBe(10)
   })
 

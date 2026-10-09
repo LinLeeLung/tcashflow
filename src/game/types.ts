@@ -43,6 +43,8 @@ export interface Player {
   childExpensePerKid: number
   position: number
   isFastTrack: boolean
+  cashRecoveryRequired?: boolean
+  bankrupt?: boolean
   skipTurns?: number
   ownerId?: string // 連線模式下操作此玩家的 clientId
 }
